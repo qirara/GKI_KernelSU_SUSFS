@@ -208,7 +208,14 @@ jobs:
             exit 1
           fi
 
+          # 纯 GKI（禁用KSU）产物不应挂着 KSU 变体名，避免和 root 版混淆
+          ARTIFACT_PREFIX="${{ inputs.ksu_variant }}"
+          if [ "${{ inputs.ksu_mode }}" = "禁用KSU" ]; then
+            ARTIFACT_PREFIX="NoRoot"
+          fi
+
           cat >> $GITHUB_ENV << EOF
+          ARTIFACT_PREFIX=$ARTIFACT_PREFIX
           CONFIG=$CONFIG
           KERNEL_ROOT=$KERNEL_ROOT
           LEGACY_SUKISU_CONFIG=$LEGACY_SUKISU_CONFIG
@@ -1796,7 +1803,7 @@ jobs:
             echo "SUSFS 提交日期: ${SUSFS_LATEST_COMMIT_DATE:-未知}"
           } > "$LOG_DIR/summary.txt"
 
-          printf '%s\n' "${{ inputs.ksu_variant }}_kernel-${CONFIG}-Build-Logs" > "$LOG_DIR/artifact-name.txt"
+          printf '%s\n' "${{ env.ARTIFACT_PREFIX }}_kernel-${CONFIG}-Build-Logs" > "$LOG_DIR/artifact-name.txt"
 
           df -h "$GITHUB_WORKSPACE" > "$LOG_DIR/disk-usage.txt" 2>&1 || true
           ccache -s > "$LOG_DIR/ccache-stats.txt" 2>&1 || true
@@ -1805,7 +1812,7 @@ jobs:
         if: ${{ always() && steps.compile_kernel.outcome == 'failure' }}
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ inputs.ksu_variant }}_kernel-${{ env.CONFIG }}-Build-Logs
+          name: ${{ env.ARTIFACT_PREFIX }}_kernel-${{ env.CONFIG }}-Build-Logs
           path: build-logs/
           if-no-files-found: warn
           retention-days: 7
@@ -1985,7 +1992,7 @@ jobs:
         if: inputs.artifact_upload_mode != '上传全部'
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ inputs.ksu_variant }}_kernel-${{ env.CONFIG }}-AnyKernel3
+          name: ${{ env.ARTIFACT_PREFIX }}_kernel-${{ env.CONFIG }}-AnyKernel3
           path: AnyKernel3/*
           compression-level: 9
 
@@ -1993,7 +2000,7 @@ jobs:
         if: inputs.artifact_upload_mode == '上传全部'
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ inputs.ksu_variant }}_kernel-${{ env.CONFIG }}
+          name: ${{ env.ARTIFACT_PREFIX }}_kernel-${{ env.CONFIG }}
           path: |
             *AnyKernel3.zip
             *.img
@@ -2005,7 +2012,7 @@ jobs:
         if: always() && env.REJ_COUNT > 0
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ inputs.ksu_variant }}_kernel-${{ env.CONFIG }}-Rejects
+          name: ${{ env.ARTIFACT_PREFIX }}_kernel-${{ env.CONFIG }}-Rejects
           path: patch-rejects/
           if-no-files-found: ignore
           compression-level: 9
