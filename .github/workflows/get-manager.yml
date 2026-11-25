@@ -1,6 +1,7 @@
 name: GetManager
+# 只需读取仓库与查询 Actions 产物，不需要写权限
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 on:
@@ -31,27 +32,25 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
+      # 上下文值经环境变量传入，避免分支名等字段中的 shell 元字符被执行
       - name: 🧐 Debug Workflow Caller Context
+        env:
+          CTX_EVENT: ${{ github.event_name }}
+          CTX_ACTOR: ${{ github.triggering_actor }}
+          CTX_WORKFLOW: ${{ github.workflow }}
+          CTX_JOB: ${{ github.job }}
+          CTX_REF: ${{ github.ref }}
+          CTX_REF_TYPE: ${{ github.ref_type }}
         run: |
           echo "==================== DEBUG CONTEXT ===================="
-          echo " "
-          echo "EVENT NAME: ${{ github.event_name }}"
-          echo " "
-          echo "--- CALLER INFORMATION ---"
-          echo "  - Caller Repository: ${{ github.caller_repository }}"
-          echo "  - Caller Workflow:   ${{ github.caller_workflow }}"
-          echo "  - Caller User:       ${{ github.triggering_actor }}"
-          echo " "
-          echo "--- WORKFLOW & JOB INFORMATION ---"
-          echo "  - Current Workflow:  ${{ github.workflow }}"
-          echo "  - Current Job ID:    ${{ github.job }}"
-          echo "  - Current Run ID:    ${{ github.run_id }}"
-          echo "  - Current Run Number:${{ github.run_number }}"
-          echo " "
-          echo "--- GIT REFERENCE INFORMATION ---"
-          echo "  - Git Ref:           ${{ github.ref }}"
-          echo "  - Ref Type:          ${{ github.ref_type }}"
-          echo " "
+          echo "EVENT NAME: $CTX_EVENT"
+          echo "  - Caller User:       $CTX_ACTOR"
+          echo "  - Current Workflow:  $CTX_WORKFLOW"
+          echo "  - Current Job ID:    $CTX_JOB"
+          echo "  - Current Run ID:    $GITHUB_RUN_ID"
+          echo "  - Current Run Number:$GITHUB_RUN_NUMBER"
+          echo "  - Git Ref:           $CTX_REF"
+          echo "  - Ref Type:          $CTX_REF_TYPE"
           echo "======================================================="
 
       - name: 安装依赖
@@ -181,10 +180,12 @@ jobs:
             echo "BakaSU..."
             REPO="Baka-SU/BakaSU"
             KSUM="manager"
+            BRANCH="main"
           elif [ "${{ inputs.kernelsu_variant }}" == "Official" ]; then
             echo "KSU..."
             REPO="tiann/KernelSU"
             KSUM="manager"
+            BRANCH="main"
           fi
 
           FILENAME=$([[ "${{ inputs.kernelsu_variant }}" == "Next" ]] && echo "build-manager-ci.yml" || echo "build-manager.yml")
@@ -248,14 +249,14 @@ jobs:
             echo "下载 SukiSU-Nova manager-ci，KSU $NOVA_RELEASE_VERSION"
             mkdir -p manager-artifacts/SukiSU-Nova
             while IFS=$'\t' read -r name url; do
-              curl -fL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              curl -fL -H "Authorization: token $GH_TOKEN" \
                 -o "manager-artifacts/SukiSU-Nova/$name" "$url"
             done <<< "$NOVA_RELEASE_LIST"
           }
 
           # 上游滚动 Release 可能先于 Actions 成功记录发布；提交规则与 APK 版本必须同时匹配。
           if [ "${{ inputs.kernelsu_variant }}" == "SukiSU" ]; then
-            if NOVA_RELEASE=$(curl -fsSL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            if NOVA_RELEASE=$(curl -fsSL -H "Authorization: token $GH_TOKEN" \
               "https://api.github.com/repos/$REPO/releases/tags/manager-ci"); then
               NOVA_RELEASE_REF=$(printf '%s\n' "$NOVA_RELEASE" | jq -r '.target_commitish // empty')
               if [[ "$NOVA_RELEASE_REF" =~ ^[0-9a-f]{40}$ ]] \
@@ -282,17 +283,17 @@ jobs:
           BEST_VERSION=0
           BEST_BUILD_ID=""
           BEST_BRANCH=""
-          RUNS_URL="https://api.github.com/repos/$REPO/actions/workflows/$FILENAME/runs?status=success&per_page=30"
+          # 只接受上游仓库自身分支上的 push / 手动构建：上游的 build-manager 也会在
+          # pull_request 上运行，并产出同名的 Manager-release（用临时密钥签名、代码来自 PR 作者）。
+          # 不加限制时，任何人提个 PR 就可能让这里挑中并分发一个非官方签名的管理器 APK。
           # SukiSU-Nova 的版本基线是 main，不能按 builtin / dev 的独立历史计数。
-          if [ "${{ inputs.kernelsu_variant }}" == "Next" ] || [ "${{ inputs.kernelsu_variant }}" == "SukiSU" ]; then
-            RUNS_URL="https://api.github.com/repos/$REPO/actions/workflows/$FILENAME/runs?branch=$BRANCH&status=success&per_page=30"
-          fi
+          RUNS_URL="https://api.github.com/repos/$REPO/actions/workflows/$FILENAME/runs?branch=$BRANCH&status=success&per_page=30"
 
           echo "开始查找不高于 KSU $TARGET_KSU_VERSION 的 Manager 产物..."
           for PAGE in $(seq 1 10); do
             echo "--------------------------------------------------"
             echo "正在检查第 ${PAGE} 页历史构建..."
-            RUNS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "$RUNS_URL&page=$PAGE")
+            RUNS=$(curl -s -H "Authorization: token $GH_TOKEN" "$RUNS_URL&page=$PAGE")
             RUN_COUNT=$(printf '%s' "$RUNS" | jq '.workflow_runs | length')
             if [ "$RUN_COUNT" -eq 0 ]; then
               break
@@ -302,6 +303,13 @@ jobs:
               BUILD_ID=$(printf '%s' "$RUNS" | jq -r ".workflow_runs[$INDEX].id")
               HEAD_SHA=$(printf '%s' "$RUNS" | jq -r ".workflow_runs[$INDEX].head_sha")
               HEAD_BRANCH=$(printf '%s' "$RUNS" | jq -r ".workflow_runs[$INDEX].head_branch")
+              RUN_EVENT=$(printf '%s' "$RUNS" | jq -r ".workflow_runs[$INDEX].event")
+              RUN_HEAD_REPO=$(printf '%s' "$RUNS" | jq -r ".workflow_runs[$INDEX].head_repository.full_name // empty")
+
+              if [ "$RUN_HEAD_REPO" != "$REPO" ] || { [ "$RUN_EVENT" != "push" ] && [ "$RUN_EVENT" != "workflow_dispatch" ]; }; then
+                echo "跳过构建 $BUILD_ID: 来源 ${RUN_HEAD_REPO:-未知}，事件 $RUN_EVENT（只接受 $REPO 自身的 push / 手动构建）"
+                continue
+              fi
 
               RUN_KSU_VERSION=$(calculate_run_ksu_version "$HEAD_SHA" || true)
               if ! [[ "$RUN_KSU_VERSION" =~ ^[0-9]+$ ]]; then
@@ -313,7 +321,7 @@ jobs:
                 continue
               fi
 
-              ARTIFACTS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              ARTIFACTS=$(curl -s -H "Authorization: token $GH_TOKEN" \
                 "https://api.github.com/repos/$REPO/actions/runs/$BUILD_ID/artifacts")
               CANDIDATE_LIST=$(get_manager_artifacts "$ARTIFACTS")
               if [ -z "$CANDIDATE_LIST" ]; then
@@ -349,7 +357,7 @@ jobs:
             SAFE_NAME=$(echo "$NAME" | tr '/ ' '__')
             ZIP_NAME="${{ inputs.kernelsu_variant }}-${SAFE_NAME}(${{ env.KSU_VERSION }}).zip"
             echo "下载 $NAME -> $ZIP_NAME"
-            curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -o "$ZIP_NAME" "$URL"
+            curl -L -H "Authorization: token $GH_TOKEN" -o "$ZIP_NAME" "$URL"
             mkdir -p "manager-artifacts/$SAFE_NAME"
             unzip -o "$ZIP_NAME" -d "manager-artifacts/$SAFE_NAME"
             rm -rf "$ZIP_NAME"
@@ -365,6 +373,10 @@ jobs:
             fi
             find manager-artifacts -type f -name "*.apk" -print
           fi
+
+          echo "Manager 来源: https://github.com/$REPO/actions/runs/$BEST_BUILD_ID"
+          echo "APK sha256:"
+          find manager-artifacts -type f -name "*.apk" -exec sha256sum {} +
 
       - name: 添加 SUSFS 模块
         id: add_SUSFS
@@ -408,9 +420,13 @@ jobs:
           }
 
           RUNS=$(github_api "$API_ROOT/actions/workflows/build.yml/runs?status=success&per_page=30")
+          # 只取 sidex15/susfs4ksu-module 自身的 push / 手动构建，排除来自 fork 或 PR 的产物
           if ! BUILD_IDS=$(jq -er '
             .workflow_runs | if type != "array" then error("构建列表不是数组")
-            else .[] | .id | select(type == "number" and . > 0 and . == floor) end
+            else .[]
+              | select(.head_repository.full_name == "sidex15/susfs4ksu-module")
+              | select(.event == "push" or .event == "workflow_dispatch")
+              | .id | select(type == "number" and . > 0 and . == floor) end
           ' <<< "$RUNS"); then
             echo "::error::SUSFS 构建列表无效或没有成功构建" >&2
             exit 1

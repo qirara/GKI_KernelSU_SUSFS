@@ -28,22 +28,29 @@ jobs:
     runs-on: ubuntu-24.04
     # 仅允许仓库所有者执行
     if: github.actor == github.repository_owner
+    permissions:
+      contents: write
+    # 用户输入统一经环境变量传入脚本，避免标签或说明中的 $( ) / 引号被当作命令执行
+    env:
+      TARGET_TAG: ${{ inputs.target_tag }}
+      REFERENCE: ${{ inputs.reference }}
+      ISSUE_TYPE: ${{ inputs.issue_type }}
 
     steps:
       - name: 验证 Release 存在
         run: |
-          if ! gh release view "${{ inputs.target_tag }}" --repo ${{ github.repository }} > /dev/null 2>&1; then
-            echo "::error::Release '${{ inputs.target_tag }}' 不存在"
+          if ! gh release view "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::Release '$TARGET_TAG' 不存在"
             exit 1
           fi
-          echo "✅ 找到 Release: ${{ inputs.target_tag }}"
+          echo "✅ 找到 Release: $TARGET_TAG"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 获取原始发布信息
         id: info
         run: |
-          gh release view "${{ inputs.target_tag }}" --repo ${{ github.repository }} \
+          gh release view "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" \
             --json name,body,isPrerelease > release_info.json
 
           jq -r '.name' release_info.json > original_title.txt
@@ -69,9 +76,9 @@ jobs:
 
           sed -i 's/^          //' new_body.md
 
-          if [ -n "${{ inputs.reference }}" ]; then
+          if [ -n "$REFERENCE" ]; then
             echo "" >> new_body.md
-            echo "**参考 / Reference**: ${{ inputs.reference }}" >> new_body.md
+            printf '**参考 / Reference**: %s\n' "$REFERENCE" >> new_body.md
           fi
 
           echo "" >> new_body.md
@@ -79,7 +86,7 @@ jobs:
           echo "" >> new_body.md
           cat original_body.txt >> new_body.md
 
-          gh release edit "${{ inputs.target_tag }}" --repo ${{ github.repository }} \
+          gh release edit "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" \
             --notes-file new_body.md
 
           echo "✅ 已标记 Release 为正常 (Normal)"
@@ -98,9 +105,9 @@ jobs:
 
           sed -i 's/^          //' new_body.md
 
-          if [ -n "${{ inputs.reference }}" ]; then
+          if [ -n "$REFERENCE" ]; then
             echo "" >> new_body.md
-            echo "**参考 / Reference**: ${{ inputs.reference }}" >> new_body.md
+            printf '**参考 / Reference**: %s\n' "$REFERENCE" >> new_body.md
           fi
 
           echo "" >> new_body.md
@@ -108,7 +115,7 @@ jobs:
           echo "" >> new_body.md
           cat original_body.txt >> new_body.md
 
-          gh release edit "${{ inputs.target_tag }}" --repo ${{ github.repository }} \
+          gh release edit "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" \
             --notes-file new_body.md
 
           echo "✅ 已更新 Release 说明 (Bug)"
@@ -133,9 +140,9 @@ jobs:
 
           sed -i 's/^          //' new_body.md
 
-          if [ -n "${{ inputs.reference }}" ]; then
+          if [ -n "$REFERENCE" ]; then
             echo "" >> new_body.md
-            echo "**参考 / Reference**: ${{ inputs.reference }}" >> new_body.md
+            printf '**参考 / Reference**: %s\n' "$REFERENCE" >> new_body.md
           fi
 
           echo "" >> new_body.md
@@ -145,7 +152,7 @@ jobs:
 
           # 删除 Release（保留 Git Tag）
           echo "🗑️ 删除原 Release..."
-          gh release delete "${{ inputs.target_tag }}" --repo ${{ github.repository }} --yes
+          gh release delete "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" --yes
 
           PRERELEASE_FLAG=""
           if [ "${{ steps.info.outputs.is_prerelease }}" == "true" ]; then
@@ -154,7 +161,7 @@ jobs:
 
           # 重建 Release（不上传任何文件）
           echo "🔄 重建 Release..."
-          gh release create "${{ inputs.target_tag }}" --repo ${{ github.repository }} \
+          gh release create "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" \
             --title "$ORIGINAL_TITLE" \
             --notes-file new_body.md \
             $PRERELEASE_FLAG
@@ -166,8 +173,8 @@ jobs:
       - name: 完成
         run: |
           echo "=========================================="
-          echo "🎯 目标标签: ${{ inputs.target_tag }}"
-          echo "📌 问题类型: ${{ inputs.issue_type }}"
-          echo "📝 参考信息: ${{ inputs.reference || '无' }}"
+          echo "🎯 目标标签: $TARGET_TAG"
+          echo "📌 问题类型: $ISSUE_TYPE"
+          echo "📝 参考信息: ${REFERENCE:-无}"
           echo "=========================================="
           echo "✅ 紧急清理完成！"

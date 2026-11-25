@@ -1,8 +1,9 @@
 name: Android 内核构建-自定义
 
+# 只调用构建与管理器下载两个可复用工作流，它们都只需要读权限
 permissions:
-  contents: write
-  actions: write
+  contents: read
+  actions: read
 
 on:
   workflow_dispatch:
@@ -229,7 +230,9 @@ jobs:
       droidspaces_ntsync: ${{ inputs.droidspaces_ntsync || false }}
       artifact_upload_mode: ${{ inputs.artifact_upload_mode }}
 
+  # 纯 GKI（禁用KSU）构建不需要管理器 APK 和 SUSFS 模块，跳过以节省时间
   get-ksu-manager:
+    if: inputs.ksu_mode != '禁用KSU'
     uses: ./.github/workflows/get-manager.yml
     secrets: inherit
     with:
