@@ -104,6 +104,12 @@ sukisu=
 
 > 留空则使用该分支的最新提交。
 
+### AnyKernel3 固定提交与构建来源清单
+
+AnyKernel3 刷机包里带有 busybox、magiskboot、magiskpolicy 等预编译二进制，刷入时会以 root 身份在手机上运行，因此工作流把它固定在一个已核对过的提交上（见 `build.yml` 中的 `ANYKERNEL_COMMIT`）。需要升级时，可以修改该默认值，或者在仓库 **Settings → Secrets and variables → Actions → Variables** 中新建变量 `ANYKERNEL3_COMMIT` 填入新的提交哈希。
+
+每次构建都会生成 `build-info.txt`，记录 GKI 源码、KernelSU、SUSFS、AnyKernel3 及各补丁仓库实际使用的提交，以及产物的 sha256（`上传全部` 模式另附 `SHA256SUMS.txt`）。刷机前可以用它核对下载的文件是否完整、来源是否符合预期。
+
 ---
 
 ## 🧪 伪装 `/proc/config.gz`（Stock Config）

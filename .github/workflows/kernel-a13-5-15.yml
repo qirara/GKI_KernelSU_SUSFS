@@ -1,8 +1,9 @@
 name: 内核构建 - Android 13 (5.15)
 
+# 只调用构建与管理器下载两个可复用工作流，它们都只需要读权限
 permissions:
-  contents: write
-  actions: write
+  contents: read
+  actions: read
 
 on:
   workflow_dispatch:
