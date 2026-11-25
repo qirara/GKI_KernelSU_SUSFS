@@ -1631,13 +1631,17 @@ jobs:
             # 6.12 起 GKI 还带有“受保护模块名单”：自编内核的签名密钥与 Google 不同，
             # 原厂 system_dlkm / vendor_boot 里的 GKI 模块（cfg80211、蓝牙等）会被当成未签名模块拒绝加载，
             # 轻则 WiFi/蓝牙消失，重则第一阶段 init 加载模块失败直接重启进 fastboot。去掉名单即可放行。
-            if grep -n 'protected_modules_list' ./common/BUILD.bazel; then
-              sed -i -E '/^[[:space:]]*"?protected_modules_list"?[[:space:]]*[:=]/d' ./common/BUILD.bazel
-              if grep -n 'protected_modules_list' ./common/BUILD.bazel; then
-                echo "::error title=受保护模块名单未移除::common/BUILD.bazel 中仍引用 protected_modules_list，请检查上面的行"
+            # kernel_build 的属性形如 protected_module_names_list = ":gki_aarch64_protected_module_names",
+            # （注意不要误伤 modules.bzl 导入的 get_gki_protected_modules_list 函数名）
+            if grep -n 'protected_module_names_list' ./common/BUILD.bazel; then
+              sed -i -E '/^[[:space:]]*"?protected_module_names_list"?[[:space:]]*[:=]/d' ./common/BUILD.bazel
+              if grep -n 'protected_module_names_list' ./common/BUILD.bazel; then
+                echo "::error title=受保护模块名单未移除::common/BUILD.bazel 中仍引用 protected_module_names_list，请检查上面的行"
                 exit 1
               fi
               echo "已移除 GKI 受保护模块名单"
+            else
+              echo "未发现 GKI 受保护模块名单，跳过"
             fi
             sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
             # 记录源码自身的 KMI 代号，刷机前可与手机 uname -r 中的 androidXX-N 对照
