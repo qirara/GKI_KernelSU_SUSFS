@@ -1628,7 +1628,24 @@ jobs:
             sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' ./common/BUILD.bazel
             sed -i '/kmi_symbol_list_strict_mode/d' ./common/BUILD.bazel
             rm -rf ./common/android/abi_gki_protected_exports_*
+            # 6.12 起 GKI 还带有“受保护模块名单”：自编内核的签名密钥与 Google 不同，
+            # 原厂 system_dlkm / vendor_boot 里的 GKI 模块（cfg80211、蓝牙等）会被当成未签名模块拒绝加载，
+            # 轻则 WiFi/蓝牙消失，重则第一阶段 init 加载模块失败直接重启进 fastboot。去掉名单即可放行。
+            # kernel_build 的属性形如 protected_module_names_list = ":gki_aarch64_protected_module_names",
+            # （注意不要误伤 modules.bzl 导入的 get_gki_protected_modules_list 函数名）
+            if grep -n 'protected_module_names_list' ./common/BUILD.bazel; then
+              sed -i -E '/^[[:space:]]*"?protected_module_names_list"?[[:space:]]*[:=]/d' ./common/BUILD.bazel
+              if grep -n 'protected_module_names_list' ./common/BUILD.bazel; then
+                echo "::error title=受保护模块名单未移除::common/BUILD.bazel 中仍引用 protected_module_names_list，请检查上面的行"
+                exit 1
+              fi
+              echo "已移除 GKI 受保护模块名单"
+            else
+              echo "未发现 GKI 受保护模块名单，跳过"
+            fi
             sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
+            # 记录源码自身的 KMI 代号，刷机前可与手机 uname -r 中的 androidXX-N 对照
+            echo "kmi_source=$(grep -hE '^(BRANCH|KMI_GENERATION)=' ./common/build.config.constants ./common/build.config.common 2>/dev/null | tr '\n' ' ')" >> "$BUILD_INFO"
           fi
 
           VERSION_INPUT=$(printf '%s' "$VERSION_RAW" | tr -d '[:space:]')
@@ -1645,13 +1662,25 @@ jobs:
           elif [ ! -f "build/build.sh" ]; then
             cd ./common
             BID="ab$((RANDOM % 90000000 + 10000000))"
-            GHASH=$(git rev-parse --verify HEAD | cut -c1-13)
-            case "${{ inputs.android_version }}-${{ inputs.kernel_version }}" in
-              "android14-6.1")  KMI_TAG="android14-11" ;;
-              "android15-6.6")  KMI_TAG="android15-8" ;;
-              "android16-6.12") KMI_TAG="android16-5" ;;
-              *) KMI_TAG="${{ inputs.android_version }}" ;;
-            esac
+            # 官方 GKI 的 release 串用 12 位提交哈希，如 6.12.69-android16-6-g0d80ee00f747-ab15461283-4k
+            GHASH=$(git rev-parse --verify HEAD | cut -c1-12)
+            # KMI 代号以源码自带的 BRANCH / KMI_GENERATION 为准（android16-6.12 后期分支已是 android16-6），
+            # 读不到时才退回旧的固定值
+            SRC_BRANCH=$(grep -hE '^BRANCH=' build.config.constants build.config.common 2>/dev/null | head -n1 | cut -d= -f2 || true)
+            SRC_KMI_GEN=$(grep -hE '^KMI_GENERATION=' build.config.constants build.config.common 2>/dev/null | head -n1 | cut -d= -f2 || true)
+            echo "源码 BRANCH=${SRC_BRANCH:-未知} KMI_GENERATION=${SRC_KMI_GEN:-未知}"
+            if [[ "$SRC_BRANCH" =~ ^android[0-9]+-[0-9]+\.[0-9]+$ ]] && [[ "$SRC_KMI_GEN" =~ ^[0-9]+$ ]]; then
+              KMI_TAG="${SRC_BRANCH%-*}-${SRC_KMI_GEN}"
+            else
+              case "${{ inputs.android_version }}-${{ inputs.kernel_version }}" in
+                "android14-6.1")  KMI_TAG="android14-11" ;;
+                "android15-6.6")  KMI_TAG="android15-8" ;;
+                "android16-6.12") KMI_TAG="android16-5" ;;
+                *) KMI_TAG="${{ inputs.android_version }}" ;;
+              esac
+              echo "::warning::未能从源码读取 KMI 代号，使用默认值 ${KMI_TAG}"
+            fi
+            echo "KMI 代号: ${KMI_TAG}"
 
             if [ "${{ inputs.kernel_version }}" = "6.1" ]; then
               KMI_LOCAL="-${KMI_TAG}-g${GHASH}-${BID}-4k"
